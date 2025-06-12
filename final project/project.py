@@ -160,7 +160,9 @@ class Date_detail(QWidget):
                     setattr(p, 'read', p.read + int(r.currentText())),
                     print(p.read),                    
                     ex.cal.setDateTextFormat(p.date, QtGui.QTextCharFormat()) if p.read >= p.preread else None,
-                    ex.next_exam_time.pop() if p.read >= p.preread else None,
+                    ex.next_exam_time.remove(p) if p.read >= p.preread else None,
+                    ex.cal.setDateTextFormat(p.date, QtGui.QTextCharFormat()) if p.read >= p.preread else None,
+                    # 4. 關掉 detail 視窗
                     ex.label1_text(),
                     self.close()
                 ))
