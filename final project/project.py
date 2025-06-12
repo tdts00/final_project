@@ -3,11 +3,26 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import (QTimer, Qt, QDate)
 from PyQt5 import QtWidgets, QtGui
-import queue
+from sortedcontainers import SortedList
+import math
+from dataclasses import dataclass
 import sys
 
+@dataclass
+class Plan:
+    name: str           # 項目名稱
+    date: QDate         # 這個 Plan 的「發生日」或「所屬日曆日期」
+    deadline: QDate     # 真正要在 calendar 標紅的日期
+    preread: int        # 預讀頁數
+    read: int
+    cycle: int          # 複習間隔
+    memory: bool
+    widget: QWidget  
+
+
 class Project(QWidget):
-    next_exam_time = queue.Queue()
+    next_exam_time = SortedList(key=lambda plan: plan.date)
+
     def __init__(self):
         # 下次考試時間 queue，裡面放的是距今天要考的天數（或直接放 QDate 也可以）
         super().__init__()
@@ -60,25 +75,26 @@ class Project(QWidget):
         self.lbl.setText(date.toString())
 
     def label1_text(self):
-        if self.next_exam_time.empty():
+        if not self.next_exam_time:
             self.label1.setText('no next exam')
-        else:
-            # 只顯示 queue 最前面那個天數
-            self.label1.setText(str(self.next_exam_time.queue[0][1].toString()))
+        elif QDate().currentDate().daysTo(self.next_exam_time[0].date) >= 0:
+            self.label1.setText(self.next_exam_time[0].date.toString())
+
+    
 
     def highlight_exam_dates(self):
-        """把 queue 裡的每個天數（以今天為基準）在 calendar 上標紅底"""
-        # 建立紅色底的格式
         fmt = QtGui.QTextCharFormat()
         fmt.setBackground(QtGui.QBrush(Qt.red))
-
-        for exam_date in list(self.next_exam_time.queue):
-            self.cal.setDateTextFormat(exam_date[1], fmt)
+        # 使用 Plan dataclass 的 deadline 屬性
+        for plan in self.next_exam_time:
+            self.cal.setDateTextFormat(plan.date, fmt)
     
     def showdatedetail(self, date):
         self.nw = Date_detail(date)
         ex.nw.show_detail()
         self.nw.show()
+
+    
 
 
 class Date_detail(QWidget):
@@ -92,23 +108,23 @@ class Date_detail(QWidget):
         
     def UI(self):
         #垂直容器
-        v_layout =  QVBoxLayout()
-        label_addnew = QWidget()
-        to_do = QWidget()
-        label_addnew_item = QtWidgets.QHBoxLayout(label_addnew)
-        to_do_item = QtWidgets.QVBoxLayout(to_do)
+        self.v_layout =  QVBoxLayout()
+        self.label_addnew = QWidget()
+        self.to_do = QWidget()
+        self.label_addnew_item = QtWidgets.QHBoxLayout(self.label_addnew)
+        self.to_do_item = QtWidgets.QVBoxLayout(self.to_do) 
 
         self.label1 = QLabel('今日待辦:')
         self.btn2 = QPushButton('加入新計畫/行程')
-        self.label4 = QLabel()
 
-        label_addnew_item.addWidget(self.label1)
-        label_addnew_item.addWidget(self.btn2)
-        to_do_item.addWidget(self.label4)
 
-        v_layout.addWidget(label_addnew, 1)
-        v_layout.addWidget(to_do, 3)
-        self.setLayout(v_layout)
+        self.label_addnew_item.addWidget(self.label1)
+        self.label_addnew_item.addWidget(self.btn2)
+
+
+        self.v_layout.addWidget(self.label_addnew, 1)
+        self.v_layout.addWidget(self.to_do, 3)
+        self.setLayout(self.v_layout)
         self.show()
         self.btn2.clicked.connect(self.select_mode)
 
@@ -120,15 +136,43 @@ class Date_detail(QWidget):
         return self.date
     
     def show_detail(self):
-        t = []
-        for i, d, ed, p, c, m in Project.next_exam_time.queue:
-            if self.date == d:
-                t.append(i)
-                t.append('\n')
-        if not t:
-            self.label4.setText("無")
-        else:
-            self.label4.setText("".join(str(x) for x in t))
+        for i in reversed(range(self.to_do_item.count())):
+            w = self.to_do_item.itemAt(i).widget()
+            if w:
+                self.to_do_item.removeWidget(w)
+                w.deleteLater()
+        for plan in Project.next_exam_time:
+            if plan.date.daysTo(self.date) % plan.cycle == 0 and plan.date.daysTo(self.date) <= plan.date.daysTo(plan.deadline) and plan.date.daysTo(self.date) >= 0:               
+                #self.to_do_item.addWidget(QLabel(plan.name + ' : ' + plan.date.toString()+'->'+plan.deadline.toString()))
+                #QtWidgets.QHBoxLayout(plan.widget).addWidget(QLabel(plan.name + ' : ' + plan.date.toString()+'->'+plan.deadline.toString()))
+                #QtWidgets.QHBoxLayout(plan.widget).addWidget(QPushButton('push'))
+                #print('hello')
+                #self.to_do_item.addWidget(plan.widget)
+                row = QWidget()
+                row_item = QtWidgets.QHBoxLayout(row)
+                #row_item.addWidget(QLabel(plan.name + ' : \n' + plan.date.toString()+'->'+plan.deadline.toString()))
+                row_item.addWidget(QLabel(plan.name + ' : '+ str(math.floor(plan.read/plan.preread*100)) + '%'))
+                row_item.addWidget(QLabel('己讀'))
+                read = QtWidgets.QComboBox(self)
+                read.addItems([str(i) for i in range(1, 1001)])
+                btn = QPushButton("完成")
+                btn.clicked.connect(lambda checked, p=plan, r=read, b=btn: (
+                    setattr(p, 'read', p.read + int(r.currentText())),
+                    print(p.read),                    
+                    ex.cal.setDateTextFormat(p.date, QtGui.QTextCharFormat()) if p.read >= p.preread else None,
+                    ex.next_exam_time.pop() if p.read >= p.preread else None,
+                    ex.label1_text(),
+                    self.close()
+                ))
+                row_item.addWidget(read)
+                row_item.addWidget(QLabel('頁 '))
+                row_item.addWidget(btn)
+                self.to_do_item.addWidget(row)
+                plan.widget = row
+                self.v_layout.addWidget(self.label_addnew, 1)
+                self.v_layout.addWidget(self.to_do, 3)
+                self.show()
+
 
             
         
@@ -210,17 +254,24 @@ class Study_plan(QWidget):
         self.add.clicked.connect(self.add_plan)
 
     def add_plan(self):
-        li = list()
-        li.append(self.plan_name_input.text())
-        li.append(self.date)
-        li.append(QDate(int(self.deadline_y.currentText()),int(self.deadline_m.currentText()),int(self.deadline_d.currentText())))
-        li.append(self.preread_input.currentText())
-        li.append(self.cycle_input.currentText())
-        li.append(self.memory.isChecked())        
-        Project.next_exam_time.put(li)        
+        plan = Plan(
+            name=self.plan_name_input.text(),
+            date=self.date,
+            deadline=QDate(int(self.deadline_y.currentText()),int(self.deadline_m.currentText()),int(self.deadline_d.currentText())),
+            preread=int(self.preread_input.currentText()),
+            read = 0,
+            cycle=int(self.cycle_input.currentText()),
+            memory=self.memory.isChecked(),
+            widget= None
+        )
+        ex.next_exam_time.add(plan)
         self.close()
         ex.highlight_exam_dates()
         ex.nw.show_detail()
+        ex.label1_text()
+        #for i in ex.next_exam_time:
+        #    if self.plan_name_input.text() == i:
+                
 
 
 if __name__ == '__main__':
